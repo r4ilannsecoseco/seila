@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """
-seila - Transfer music to iPod Shuffle 3G on Linux
-
-Usage:
-    seila download --from-file playlist.txt --yes
-    seila transfer --sync
-    seila clean
+seila - Transfer music to iPod Shuffle 3G in high quality
 """
 import argparse
 import os
@@ -252,82 +247,30 @@ def print_summary(new_files, changed_files, unchanged_files, ipod_info):
     return True
 
 
-def rebuild_itunes_sd(ipod_mount, tracks):
-    """Rebuild iTunesSD database file for iPod Shuffle."""
-    sd_path = ipod_mount / ITUNES_SD_PATH
-    sd_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(sd_path, "wb") as f:
-        # Header: 18 bytes
-        header = bytearray(18)
-        header[3] = len(tracks) >> 8
-        header[4] = len(tracks) & 0xFF
-        header[6] = 1  # version
-        header[8] = 18
-        f.write(header)
-
-        # Each entry: 558 bytes
-        for track in tracks:
-            entry = bytearray(558)
-            # File type byte
-            ext = track["ext"]
-            if ext == ".mp3":
-                entry[29] = 1
-            elif ext in (".m4a", ".aac"):
-                entry[29] = 2
-            elif ext == ".wav":
-                entry[29] = 4
-            else:
-                entry[29] = 1
-
-            # Filename (UTF-16LE, max 261 chars)
-            filename = track["ipod_filename"].encode("utf-16-le")[:260]
-            for i, byte_val in enumerate(filename):
-                entry[33 + i] = byte_val
-
-            # Shuffle flag
-            entry[555] = 1
-
-            f.write(entry)
+SHUFFLE_SCRIPT = Path(__file__).parent / "ipod-shuffle-4g.py"
 
 
-def rebuild_pstate(ipod_mount):
-    """Rebuild iTunesPState (playback state)."""
-    pstate_path = ipod_mount / ITUNES_PSTATE_PATH
-    pstate_path.parent.mkdir(parents=True, exist_ok=True)
+def rebuild_db(ipod_mount):
+    """Rebuild iPod database using ipod-shuffle-4g."""
+    script = SHUFFLE_SCRIPT.resolve()
+    if not script.exists():
+        print(f"[X] Script ipod-shuffle-4g.py nao encontrado em {script}")
+        return
 
-    pstate = bytearray(21)
-    pstate[0] = 29  # volume
-    pstate[6] = 1
-    pstate[18] = 1
-    with open(pstate_path, "wb") as f:
-        f.write(pstate)
+    # Remove old iTunesDB that confuses the Shuffle
+    old_db = ipod_mount / "iPod_Control" / "iTunes" / "iTunesDB"
+    if old_db.exists():
+        old_db.unlink()
 
-
-def rebuild_stats(ipod_mount, track_count):
-    """Rebuild iTunesStats (play statistics)."""
-    stats_path = ipod_mount / ITUNES_STATS_PATH
-    stats_path.parent.mkdir(parents=True, exist_ok=True)
-
-    track_count_bytes = track_count.to_bytes(3, byteorder="little")
-    stats_data = track_count_bytes + b"\x00" * 3 + (b"\x12\x00\x00\x00\x00" + b"\xff" * 3 + b"\x00" * 12) * track_count
-    with open(stats_path, "wb") as f:
-        f.write(stats_data)
-
-
-def rebuild_shuffle(ipod_mount, track_count):
-    """Rebuild iTunesShuffle (shuffle sequence)."""
-    shuffle_path = ipod_mount / ITUNES_SHUFFLE_PATH
-    shuffle_path.parent.mkdir(parents=True, exist_ok=True)
-
-    import random
-    random.seed()
-    seq = list(range(track_count))
-    random.shuffle(seq)
-
-    with open(shuffle_path, "wb") as f:
-        for idx in seq:
-            f.write(idx.to_bytes(3, byteorder="little"))
+    result = subprocess.run(
+        ["python3", str(script), str(ipod_mount)],
+        capture_output=True, text=True
+    )
+    for line in result.stdout.splitlines():
+        if "Error" in line or "error" in line:
+            print(f"  [!] {line}")
+    if result.returncode != 0:
+        print(f"[X] Erro ao reconstruir database: {result.stderr[:200]}")
 
 
 def generate_playlists(ipod_mount, tracks):
@@ -621,8 +564,8 @@ def cmd_clean_ipod(ipod_mount, source_dir):
     sd_path = ipod_mount / ITUNES_SD_PATH
     if sd_path.exists():
         sd_path.unlink()
-    rebuild_itunes_sd(ipod_mount, [])
-    print("  [OK] Database iTunesSD resetada")
+    rebuild_db(ipod_mount)
+    print("  [OK] Database reconstruida")
 
     # Clear cache
     cache_dir = source_dir / ".seila_cache"
@@ -807,7 +750,7 @@ def main():
     save_cache(source_dir, {"version": 1, "files": cache_new})
 
     # Rebuild database
-    print("\n[*] Reconstruindo banco de dados do iPod...")
+    print("\n[*] Reconstruindo database (ipod-shuffle-4g)...")
     all_tracks = []
     for key, val in cache_new.items():
         all_tracks.append({
@@ -816,10 +759,7 @@ def main():
             "artist": key.split("—")[0] if "—" in key else "Desconhecido",
         })
 
-    rebuild_itunes_sd(ipod_mount, all_tracks)
-    rebuild_pstate(ipod_mount)
-    rebuild_stats(ipod_mount, len(all_tracks))
-    rebuild_shuffle(ipod_mount, len(all_tracks))
+    rebuild_db(ipod_mount)
 
     # Summary
     print(f"\n{'='*50}")
