@@ -83,6 +83,6 @@ seila download "Artist - Song Name"
 
 - FAT32 filesystem
 - Supports ALAC, MP3, AAC, WAV
-- ~2 GB capacity
+- **2 GB capacity** (the largest Shuffle Apple made)
 - No display — uses VoiceOver for navigation
-- Database file: `iPod_Control/Device/SysInfoExtended2`
+- Database rebuilt via `ipod-shuffle-4g` (bundled)
